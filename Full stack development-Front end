@@ -1,0 +1,477 @@
+App.js-React
+------------
+import React, { useState, useEffect } from "react";
+
+const API = "http://localhost:3000/api/auth";
+
+function App() {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [users, setUsers] = useState([]);
+  const [editId, setEditId] = useState(null); // ✅ NEW
+
+  // Load users
+  const loadUsers = async () => {
+    const res = await fetch(API + "/users");
+    const data = await res.json();
+    setUsers(data);
+  };
+
+  useEffect(() => {
+    loadUsers();
+  }, []);
+
+  // ✅ SAVE (Register + Update)
+  const saveUser = async () => {
+    if (editId) {
+      // UPDATE
+      await fetch(API + "/user/" + editId, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ name, email })
+      });
+
+      alert("User Updated ✅");
+      setEditId(null);
+    } else {
+      // CREATE
+      await fetch(API + "/register", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ name, email, password })
+      });
+
+      alert("User Registered ✅");
+    }
+
+    setName("");
+    setEmail("");
+    setPassword("");
+    loadUsers();
+  };
+
+  // Login
+  const login = async () => {
+    const res = await fetch(API + "/login", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ email, password })
+    });
+
+    const data = await res.json();
+
+    if (res.ok) {
+      localStorage.setItem("token", data.token);
+      alert("Login Successful ✅");
+    } else {
+      alert(data.message || "Login Failed ❌");
+    }
+  };
+
+  // Delete user
+  const deleteUser = async (id) => {
+    await fetch(API + "/user/" + id, {
+      method: "DELETE"
+    });
+    loadUsers();
+  };
+
+  // ✅ EDIT function
+  const editUser = (user) => {
+    setName(user.name);
+    setEmail(user.email);
+    setEditId(user._id);
+  };
+
+  return (
+    <div style={{ padding: "20px" }}>
+      <h2>Register / Login</h2>
+
+      <input
+        placeholder="Name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+      /><br /><br />
+
+      <input
+        placeholder="Email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+      /><br /><br />
+
+      <input
+        placeholder="Password"
+        type="password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+      /><br /><br />
+
+      {/* ✅ Button changes automatically */}
+      <button onClick={saveUser}>
+        {editId ? "Update" : "Register"}
+      </button>
+
+      <button onClick={login}>Login</button>
+
+      <h3>Users</h3>
+
+      <ul>
+        {users.map((u) => (
+          <li key={u._id}>
+            {u.name} - {u.email}
+
+            {/* ✅ EDIT BUTTON */}
+            <button onClick={() => editUser(u)}>Edit</button>
+
+            {/* DELETE */}
+            <button onClick={() => deleteUser(u._id)}>Delete</button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+
+index.js
+--------------
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import './index.css';
+import App from './App';
+import reportWebVitals from './reportWebVitals';
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+
+// If you want to start measuring performance in your app, pass a function
+// to log results (for example: reportWebVitals(console.log))
+// or send to an analytics endpoint. Learn more: https://bit.ly/CRA-vitals
+reportWebVitals();
+
+---------------------------------------
+Backend-Node js + express+ Mongodb
+
+User.js-models
+------------------
+const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
+
+const UserSchema = new mongoose.Schema(
+  {
+    name: {
+      type: String,
+      required: true
+    },
+    email: {
+      type: String,
+      required: true,
+      unique: true
+    },
+    password: {
+      type: String,
+      required: true
+    }
+  },
+  { timestamps: true }
+);
+
+//
+// 🔐 HASH PASSWORD BEFORE SAVE
+//
+UserSchema.pre("save", async function () {
+  if (!this.isModified("password")) return;
+
+  const salt = await bcrypt.genSalt(10);
+  this.password = await bcrypt.hash(this.password, salt);
+});
+
+//
+// 🔐 COMPARE PASSWORD (LOGIN)
+//
+UserSchema.methods.matchPassword = async function (enteredPassword) {
+  return await bcrypt.compare(enteredPassword, this.password);
+};
+
+module.exports = mongoose.model("User", UserSchema);
+
+
+export default App;
+
+
+Routes-auth.js
+------------------
+const express = require("express");
+const router = express.Router();
+const User = require("../models/User");
+const jwt = require("jsonwebtoken");
+console.log("Auth routes loaded");
+// 🔐 Generate Token
+const generateToken = (id) => {
+  return jwt.sign({ id }, "secretkey", { expiresIn: "1d" });
+};
+
+//
+// ================= REGISTER =================
+//
+router.post("/register", async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+
+    // check existing user
+    const userExists = await User.findOne({ email });
+    if (userExists) {
+      return res.status(400).json({ message: "User already exists" });
+    }
+
+    // create user
+    const user = await User.create({ name, email, password });
+
+    res.status(201).json({
+      _id: user._id,
+      name: user.name,
+      email: user.email
+    });
+
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+//
+// ================= LOGIN =================
+//
+router.post("/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    const user = await User.findOne({ email });
+
+    if (user && (await user.matchPassword(password))) {
+      res.json({
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        token: generateToken(user._id)
+      });
+    } else {
+      res.status(401).json({ message: "Invalid email or password" });
+    }
+
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+//
+// ================= GET ALL USERS =================
+//
+router.get("/users", async (req, res) => {
+  console.log("USERS ROUTE HIT ✅");   // 👈 ADD THIS
+
+  try {
+    const users = await User.find();
+    res.json(users);
+  } catch (error) {
+    console.log("ERROR:", error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+//
+// ================= UPDATE USER =================
+//
+router.put("/user/:id", async (req, res) => {
+  try {
+    const { name, email } = req.body;
+
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      { name, email },
+      { new: true }
+    );
+
+    res.json(user);
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+//
+// ================= DELETE USER =================
+//
+router.delete("/user/:id", async (req, res) => {
+  try {
+    await User.findByIdAndDelete(req.params.id);
+    res.json({ message: "User deleted successfully" });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ message: error.message });
+  }
+});
+router.get("/test", (req, res) => {
+  res.send("TEST ROUTE WORKING");
+});
+module.exports = router;
+--------------------------------------------------
+
+
+
+index.js
+---------------------------------------
+const express = require("express");
+const router = express.Router();
+const User = require("../models/User");
+const jwt = require("jsonwebtoken");
+console.log("Auth routes loaded");
+// 🔐 Generate Token
+const generateToken = (id) => {
+  return jwt.sign({ id }, "secretkey", { expiresIn: "1d" });
+};
+
+//
+// ================= REGISTER =================
+//
+router.post("/register", async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+
+    // check existing user
+    const userExists = await User.findOne({ email });
+    if (userExists) {
+      return res.status(400).json({ message: "User already exists" });
+    }
+
+    // create user
+    const user = await User.create({ name, email, password });
+
+    res.status(201).json({
+      _id: user._id,
+      name: user.name,
+      email: user.email
+    });
+
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+//
+// ================= LOGIN =================
+//
+router.post("/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    const user = await User.findOne({ email });
+
+    if (user && (await user.matchPassword(password))) {
+      res.json({
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        token: generateToken(user._id)
+      });
+    } else {
+      res.status(401).json({ message: "Invalid email or password" });
+    }
+
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+//
+// ================= GET ALL USERS =================
+//
+router.get("/users", async (req, res) => {
+  console.log("USERS ROUTE HIT ✅");   // 👈 ADD THIS
+
+  try {
+    const users = await User.find();
+    res.json(users);
+  } catch (error) {
+    console.log("ERROR:", error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+//
+// ================= UPDATE USER =================
+//
+router.put("/user/:id", async (req, res) => {
+  try {
+    const { name, email } = req.body;
+
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      { name, email },
+      { new: true }
+    );
+
+    res.json(user);
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+//
+// ================= DELETE USER =================
+//
+router.delete("/user/:id", async (req, res) => {
+  try {
+    await User.findByIdAndDelete(req.params.id);
+    res.json({ message: "User deleted successfully" });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ message: error.message });
+  }
+});
+router.get("/test", (req, res) => {
+  res.send("TEST ROUTE WORKING");
+});
+module.exports = router;
+
+---------------------------------------------
+Terminal
+
+Server running on http://localhost:3000
+✅ MongoDB Connected
+PS C:\Node.js> node index.js
+Auth routes loaded
+Server running on http://localhost:3000
+✅ MongoDB Connected
+USERS ROUTE HIT ✅
+---------------------------------------------
+PS C:\Node.js> cd C:\Node.js\frontend
+PS C:\Node.js\frontend> npm start
+
+> frontend@0.1.0 start
+> react-scripts start
+-----------------------------------------------
+  On Your Network:  http://192.168.29.91:3001
+
+Note that the development build is not optimized.
+To create a production build, use npm run build.
+
+webpack compiled successfully
+Compiling...
+Compiled successfully!
+---------------------------------------
